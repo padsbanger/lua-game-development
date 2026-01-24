@@ -1,4 +1,5 @@
 function love.load()
+  love.window.setMode(1000, 768)
   gameState = 1
   maxTime = 2
   timer = maxTime
