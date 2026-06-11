@@ -22,6 +22,16 @@ Or call your installed LÖVE executable directly:
 & "C:\Program Files\LOVE\love.exe" "games\comet-orchard"
 ```
 
+## Windows exe build
+
+From the project root:
+
+```powershell
+.\build-comet-orchard.bat
+```
+
+The build appears in `build\comet-orchard`. Send the whole folder, not only `CometOrchard.exe`, because the exe needs LÖVE's DLL files beside it.
+
 or from this folder:
 
 ```powershell
