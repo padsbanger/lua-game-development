@@ -10,6 +10,18 @@ Install [LÖVE](https://love2d.org/), then run one of these commands:
 love games/comet-orchard
 ```
 
+On Windows, if `love` is not on your PATH, use the launcher from the project root:
+
+```powershell
+.\run-comet-orchard.bat
+```
+
+Or call your installed LÖVE executable directly:
+
+```powershell
+& "C:\Program Files\LOVE\love.exe" "games\comet-orchard"
+```
+
 or from this folder:
 
 ```powershell
