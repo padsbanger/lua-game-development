@@ -4,27 +4,27 @@ A tiny AFK pixel RPG for LÖVE. It sits in a slim desktop window while your hero
 
 ## Run
 
-From the project root:
+From the repo root:
 
 ```powershell
-.\run-deskbar-quest.bat
+.\run.bat
 ```
 
 or directly:
 
 ```powershell
-& "C:\Program Files\LOVE\love.exe" "games\deskbar-quest"
+& "C:\Program Files\LOVE\love.exe" "."
 ```
 
 ## Build
 
-From the project root:
+From the repo root:
 
 ```powershell
-.\build-deskbar-quest.bat
+.\build.bat
 ```
 
-The Windows build appears in `build\deskbar-quest`. Send the whole folder, not just the exe.
+The Windows build appears in `build`. Send the whole folder, not just the exe.
 
 ## Controls
 
@@ -43,8 +43,8 @@ Progress is saved automatically.
 Deskbar Quest can use external PNG sprites. Put pixel-art sprites in:
 
 ```text
-games\deskbar-quest\assets\heroes
-games\deskbar-quest\assets\monsters
+assets\heroes
+assets\monsters
 ```
 
-Use the filenames listed in `games\deskbar-quest\assets\README.md`. If a sprite is missing, the game falls back to its built-in rectangle art.
+Use the filenames listed in `assets\README.md`. If a sprite is missing, the game falls back to its built-in rectangle art.

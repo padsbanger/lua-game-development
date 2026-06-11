@@ -2,10 +2,10 @@
 setlocal
 
 set "ROOT=%~dp0"
-set "GAME_DIR=%ROOT%games\deskbar-quest"
-set "BUILD_DIR=%ROOT%build\deskbar-quest"
-set "ZIP_PATH=%BUILD_DIR%\deskbar-quest.zip"
-set "LOVE_PATH=%BUILD_DIR%\deskbar-quest.love"
+set "GAME_DIR=%ROOT%"
+set "BUILD_DIR=%ROOT%build"
+set "ZIP_PATH=%BUILD_DIR%\DeskbarQuest.zip"
+set "LOVE_PATH=%BUILD_DIR%\DeskbarQuest.love"
 set "EXE_PATH=%BUILD_DIR%\DeskbarQuest.exe"
 set "LOVE_EXE="
 set "LOVE_DIR="
@@ -18,8 +18,8 @@ if not defined LOVE_EXE if exist "%ProgramFiles%\LOVE\love.exe" set "LOVE_EXE=%P
 if not defined LOVE_EXE if exist "%ProgramFiles(x86)%\LOVE\love.exe" set "LOVE_EXE=%ProgramFiles(x86)%\LOVE\love.exe"
 if not defined LOVE_EXE if exist "%LOCALAPPDATA%\Programs\LOVE\love.exe" set "LOVE_EXE=%LOCALAPPDATA%\Programs\LOVE\love.exe"
 
-if not exist "%GAME_DIR%\main.lua" (
-  echo Could not find the game at "%GAME_DIR%".
+if not exist "%GAME_DIR%main.lua" (
+  echo Could not find main.lua in "%GAME_DIR%".
   pause
   exit /b 1
 )
@@ -34,7 +34,7 @@ for %%I in ("%LOVE_EXE%") do set "LOVE_DIR=%%~dpI"
 mkdir "%BUILD_DIR%" 2>nul
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop'; Compress-Archive -Path '%GAME_DIR%\*' -DestinationPath '%ZIP_PATH%' -Force; Move-Item -LiteralPath '%ZIP_PATH%' -Destination '%LOVE_PATH%' -Force"
+  "$ErrorActionPreference='Stop'; Compress-Archive -Path '%GAME_DIR%assets', '%GAME_DIR%data', '%GAME_DIR%main.lua', '%GAME_DIR%conf.lua', '%GAME_DIR%README.md' -DestinationPath '%ZIP_PATH%' -Force; Move-Item -LiteralPath '%ZIP_PATH%' -Destination '%LOVE_PATH%' -Force"
 
 if errorlevel 1 (
   echo Failed to create "%LOVE_PATH%".
