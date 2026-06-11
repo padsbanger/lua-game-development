@@ -7,239 +7,28 @@ local SCALE = 2
 local SAVE_FILE = "save.lua"
 local VERSION = 1
 
+local GLYPHS = require("data.glyphs")
+local classes = require("data.classes")
+local zones = require("data.zones")
+local monsterTypes = require("data.monster_types")
+local rarity = require("data.rarity")
+local itemNames = require("data.item_names")
+
 local canvas
 local buttons = {}
 local particles = {}
 local floaters = {}
+local attackEffects = {}
 local lastSave = 0
 local appMode = "menu"
 local state
+local sprites = {
+  heroes = {},
+  monsters = {}
+}
 
 local rebuildButtons
 local rebuildMenuButtons
-
-local GLYPHS = {
-  ["A"] = {"111", "101", "111", "101", "101"},
-  ["B"] = {"110", "101", "110", "101", "110"},
-  ["C"] = {"111", "100", "100", "100", "111"},
-  ["D"] = {"110", "101", "101", "101", "110"},
-  ["E"] = {"111", "100", "110", "100", "111"},
-  ["F"] = {"111", "100", "110", "100", "100"},
-  ["G"] = {"111", "100", "101", "101", "111"},
-  ["H"] = {"101", "101", "111", "101", "101"},
-  ["I"] = {"111", "010", "010", "010", "111"},
-  ["J"] = {"001", "001", "001", "101", "111"},
-  ["K"] = {"101", "101", "110", "101", "101"},
-  ["L"] = {"100", "100", "100", "100", "111"},
-  ["M"] = {"101", "111", "111", "101", "101"},
-  ["N"] = {"101", "111", "111", "111", "101"},
-  ["O"] = {"111", "101", "101", "101", "111"},
-  ["P"] = {"111", "101", "111", "100", "100"},
-  ["Q"] = {"111", "101", "101", "111", "001"},
-  ["R"] = {"111", "101", "111", "110", "101"},
-  ["S"] = {"111", "100", "111", "001", "111"},
-  ["T"] = {"111", "010", "010", "010", "010"},
-  ["U"] = {"101", "101", "101", "101", "111"},
-  ["V"] = {"101", "101", "101", "101", "010"},
-  ["W"] = {"101", "101", "111", "111", "101"},
-  ["X"] = {"101", "101", "010", "101", "101"},
-  ["Y"] = {"101", "101", "010", "010", "010"},
-  ["Z"] = {"111", "001", "010", "100", "111"},
-  ["0"] = {"111", "101", "101", "101", "111"},
-  ["1"] = {"010", "110", "010", "010", "111"},
-  ["2"] = {"111", "001", "111", "100", "111"},
-  ["3"] = {"111", "001", "111", "001", "111"},
-  ["4"] = {"101", "101", "111", "001", "001"},
-  ["5"] = {"111", "100", "111", "001", "111"},
-  ["6"] = {"111", "100", "111", "101", "111"},
-  ["7"] = {"111", "001", "010", "010", "010"},
-  ["8"] = {"111", "101", "111", "101", "111"},
-  ["9"] = {"111", "101", "111", "001", "111"},
-  ["."] = {"000", "000", "000", "000", "010"},
-  [","] = {"000", "000", "000", "010", "100"},
-  [":"] = {"000", "010", "000", "010", "000"},
-  ["'"] = {"010", "010", "000", "000", "000"},
-  ["!"] = {"010", "010", "010", "000", "010"},
-  ["?"] = {"111", "001", "011", "000", "010"},
-  ["+"] = {"000", "010", "111", "010", "000"},
-  ["-"] = {"000", "000", "111", "000", "000"},
-  ["/"] = {"001", "001", "010", "100", "100"},
-  ["<"] = {"001", "010", "100", "010", "001"},
-  [">"] = {"100", "010", "001", "010", "100"},
-  ["("] = {"010", "100", "100", "100", "010"},
-  [")"] = {"010", "001", "001", "001", "010"},
-  [" "] = {"000", "000", "000", "000", "000"}
-}
-
-local classes = {
-  {
-    id = "guard",
-    name = "Guard",
-    color = {0.28, 0.78, 0.86},
-    hp = 44,
-    atk = 7,
-    def = 3,
-    speed = 1.05,
-    skill = "Shield Bash"
-  },
-  {
-    id = "spark",
-    name = "Spark",
-    color = {0.96, 0.56, 0.22},
-    hp = 32,
-    atk = 10,
-    def = 1,
-    speed = 1.18,
-    skill = "Chain Bolt"
-  },
-  {
-    id = "leaf",
-    name = "Leaf",
-    color = {0.48, 0.9, 0.38},
-    hp = 36,
-    atk = 8,
-    def = 2,
-    speed = 1.55,
-    skill = "Quick Shot"
-  }
-}
-
-local zones = {
-  {
-    name = "Greenline",
-    tint = {0.15, 0.38, 0.24},
-    monsters = {"Moss Bit", "Button Imp", "Dust Sprout", "Vine Tick", "Acorn Bully", "Puddle Sprite"},
-    level = 1
-  },
-  {
-    name = "Clock Dock",
-    tint = {0.23, 0.26, 0.42},
-    monsters = {"Cogling", "Rust Wisp", "Bell Slime", "Minute Bat", "Gear Toad", "Latch Mimic"},
-    level = 5
-  },
-  {
-    name = "Ash Pantry",
-    tint = {0.42, 0.24, 0.15},
-    monsters = {"Toast Fiend", "Coal Mite", "Cinder Bat", "Pepper Grub", "Soot Knight", "Ember Jar"},
-    level = 11
-  },
-  {
-    name = "Moon Cache",
-    tint = {0.26, 0.21, 0.45},
-    monsters = {"Lunar Wisp", "Vault Shade", "Star Moth", "Orbit Eel", "Comet Pawn", "Dream Lock"},
-    level = 18
-  }
-}
-
-local monsterTypes = {
-  {
-    id = "grunt",
-    title = "",
-    shape = "beast",
-    color = {0.55, 0.74, 0.5},
-    hp = 1,
-    atk = 1,
-    def = 1,
-    speed = 1,
-    reward = 1,
-    drop = 1,
-    weight = 45
-  },
-  {
-    id = "swift",
-    title = "Quick",
-    shape = "wing",
-    color = {0.46, 0.82, 1},
-    hp = 0.75,
-    atk = 0.9,
-    def = 0.7,
-    speed = 0.68,
-    reward = 1.05,
-    drop = 1,
-    weight = 18
-  },
-  {
-    id = "bulwark",
-    title = "Iron",
-    shape = "shield",
-    color = {0.74, 0.72, 0.66},
-    hp = 1.55,
-    atk = 0.85,
-    def = 1.8,
-    speed = 1.35,
-    reward = 1.2,
-    drop = 1.08,
-    weight = 14
-  },
-  {
-    id = "venom",
-    title = "Sour",
-    shape = "slime",
-    color = {0.62, 0.95, 0.34},
-    hp = 0.95,
-    atk = 1.15,
-    def = 0.85,
-    speed = 1,
-    reward = 1.12,
-    drop = 1.12,
-    effect = "poison",
-    weight = 10
-  },
-  {
-    id = "caster",
-    title = "Rune",
-    shape = "wisp",
-    color = {0.9, 0.46, 1},
-    hp = 0.85,
-    atk = 1.45,
-    def = 0.6,
-    speed = 1.15,
-    reward = 1.18,
-    drop = 1.15,
-    effect = "blast",
-    weight = 8
-  },
-  {
-    id = "hoarder",
-    title = "Gilded",
-    shape = "mimic",
-    color = {1, 0.78, 0.24},
-    hp = 1.2,
-    atk = 0.95,
-    def = 1.05,
-    speed = 1.05,
-    reward = 1.75,
-    drop = 1.65,
-    weight = 4
-  },
-  {
-    id = "elite",
-    title = "Crown",
-    shape = "elite",
-    color = {1, 0.38, 0.32},
-    hp = 2.35,
-    atk = 1.6,
-    def = 1.4,
-    speed = 1.25,
-    reward = 2.4,
-    drop = 2.1,
-    effect = "rage",
-    weight = 1
-  }
-}
-
-local rarity = {
-  {name = "Common", color = {0.8, 0.82, 0.78}, mult = 1.0, chance = 68},
-  {name = "Uncommon", color = {0.35, 0.9, 0.42}, mult = 1.35, chance = 23},
-  {name = "Rare", color = {0.38, 0.68, 1.0}, mult = 1.85, chance = 7},
-  {name = "Mythic", color = {1.0, 0.62, 0.18}, mult = 2.65, chance = 2}
-}
-
-local itemNames = {
-  weapon = {"Tin Needle", "Desk Cutter", "Ribbon Spear", "Pixel Brand"},
-  armor = {"Patch Vest", "Mail Tab", "Pinned Coat", "Chrome Shell"},
-  charm = {"Lucky Key", "Tiny Bell", "Green Token", "Focus Cube"}
-}
 
 local function clamp(value, low, high)
   return math.max(low, math.min(high, value))
@@ -247,6 +36,37 @@ end
 
 local function copyColor(color, alpha)
   return color[1], color[2], color[3], alpha or color[4] or 1
+end
+
+local function loadSprite(path)
+  if not lf.getInfo(path) then
+    return nil
+  end
+
+  local image = lg.newImage(path)
+  image:setFilter("nearest", "nearest")
+  return image
+end
+
+local function loadGraphicsPack()
+  sprites.heroes = {}
+  sprites.monsters = {}
+
+  for _, c in ipairs(classes) do
+    sprites.heroes[c.id] = loadSprite("assets/heroes/" .. c.id .. ".png")
+  end
+
+  for _, monsterType in ipairs(monsterTypes) do
+    sprites.monsters[monsterType.shape] = loadSprite("assets/monsters/" .. monsterType.shape .. ".png")
+  end
+end
+
+local function drawSprite(image, x, y, width, height)
+  local scale = math.min(width / image:getWidth(), height / image:getHeight())
+  local drawX = math.floor(x + (width - image:getWidth() * scale) / 2)
+  local drawY = math.floor(y + (height - image:getHeight() * scale) / 2)
+  lg.setColor(1, 1, 1)
+  lg.draw(image, drawX, drawY, 0, scale, scale)
 end
 
 local function textWidth(text)
@@ -390,6 +210,16 @@ local function addParticle(x, y, color)
     vy = love.math.random(-45, 8) / 10,
     life = love.math.random(35, 70) / 100,
     color = color
+  }
+end
+
+local function addAttackEffect(kind, skillHit, color)
+  attackEffects[#attackEffects + 1] = {
+    kind = kind,
+    skillHit = skillHit,
+    color = color,
+    life = kind == "sword" and 0.22 or 0.34,
+    maxLife = kind == "sword" and 0.22 or 0.34
   }
 end
 
@@ -611,8 +441,20 @@ end
 local function attackMonster(skillHit)
   local s = stats()
   local monster = state.monster
-  local base = math.max(1, s.atk - monster.def * 0.45)
+  local c = class()
+  local defenseFactor = c.attack == "lightning" and 0.18 or c.attack == "bow" and 0.34 or 0.55
+  local base = math.max(1, s.atk - monster.def * defenseFactor)
   local damage = math.floor(base * love.math.random(82, 118) / 100)
+  local hitCount = 1
+
+  if c.attack == "sword" then
+    damage = math.floor(damage * 1.18 + s.def * 0.45)
+  elseif c.attack == "lightning" then
+    damage = math.floor(damage * 0.92 + state.level * 0.35)
+  elseif c.attack == "bow" then
+    damage = math.floor(damage * 0.82)
+    hitCount = skillHit and 3 or 1
+  end
 
   if love.math.random() < s.crit then
     damage = math.floor(damage * 1.85)
@@ -622,14 +464,27 @@ local function attackMonster(skillHit)
   end
 
   if skillHit then
-    damage = math.floor(damage * 2.1 + state.level * 2)
-    addFloater(class().skill, 181, 12, class().color)
+    if c.attack == "sword" then
+      damage = math.floor(damage * 2.35 + s.def)
+    elseif c.attack == "lightning" then
+      damage = math.floor(damage * 2.65 + state.level * 3)
+    elseif c.attack == "bow" then
+      damage = math.floor(damage * 1.15 + state.level)
+    end
+    addFloater(c.skill, 181, 12, c.color)
     state.skill = 0
   end
 
-  monster.hp = monster.hp - damage
+  local totalDamage = damage * hitCount
+  monster.hp = monster.hp - totalDamage
+  addAttackEffect(c.attack, skillHit, c.color)
+
+  if hitCount > 1 then
+    addFloater(tostring(totalDamage), 259, 39, c.color)
+  end
+
   for _ = 1, skillHit and 10 or 4 do
-    addParticle(252, 42, class().color)
+    addParticle(252, 42, c.color)
   end
 
   if monster.hp <= 0 then
@@ -790,6 +645,7 @@ local function beginNewGame()
   state = defaultState()
   particles = {}
   floaters = {}
+  attackEffects = {}
   spawnMonster()
   appMode = "playing"
   rebuildButtons()
@@ -804,6 +660,7 @@ local function beginLoadGame()
 
   particles = {}
   floaters = {}
+  attackEffects = {}
   loadSave()
   offlineProgress()
   appMode = "playing"
@@ -884,6 +741,14 @@ local function updateEffects(dt)
     end
   end
 
+  for i = #attackEffects, 1, -1 do
+    local effect = attackEffects[i]
+    effect.life = effect.life - dt
+    if effect.life <= 0 then
+      table.remove(attackEffects, i)
+    end
+  end
+
   state.logTimer = math.max(0, (state.logTimer or 0) - dt)
 end
 
@@ -893,6 +758,7 @@ function love.load()
   lg.setLineStyle("rough")
   canvas = lg.newCanvas(VW, VH)
   canvas:setFilter("nearest", "nearest")
+  loadGraphicsPack()
 
   local desktopW, desktopH = love.window.getDesktopDimensions()
   love.window.setPosition(math.max(0, desktopW - 740), math.max(0, desktopH - 230))
@@ -930,16 +796,109 @@ end
 
 local function drawHero(x, y)
   local c = class().color
+  local attack = class().attack
+  local sprite = sprites.heroes[class().id]
+  if sprite then
+    drawSprite(sprite, x - 3, y - 2, 28, 28)
+    return
+  end
+
   rect(x + 3, y + 4, 10, 15, {0.12, 0.12, 0.14})
   rect(x + 5, y, 7, 6, {0.92, 0.72, 0.5})
   rect(x + 4, y + 7, 9, 8, c)
   rect(x + 2, y + 15, 4, 6, {0.18, 0.2, 0.24})
   rect(x + 10, y + 15, 4, 6, {0.18, 0.2, 0.24})
 
-  if state.heroTimer > 0.72 then
+  if attack == "sword" then
+    if state.heroTimer > 0.78 then
+      rect(x + 11, y + 8, 5, 4, {0.42, 0.24, 0.14})
+      rect(x + 15, y + 10, 14, 3, {0.74, 0.82, 0.9})
+      rect(x + 17, y + 9, 12, 1, {1, 1, 0.88})
+      rect(x + 29, y + 9, 3, 5, {0.94, 0.98, 1})
+      rect(x + 12, y + 7, 6, 2, {0.86, 0.62, 0.2})
+      rect(x + 12, y + 13, 6, 2, {0.86, 0.62, 0.2})
+    elseif state.heroTimer > 0.48 then
+      rect(x + 10, y + 6, 5, 5, {0.42, 0.24, 0.14})
+      rect(x + 12, y - 10, 4, 17, {0.74, 0.82, 0.9})
+      rect(x + 13, y - 11, 2, 15, {1, 1, 0.88})
+      rect(x + 10, y - 12, 8, 3, {0.94, 0.98, 1})
+      rect(x + 7, y + 6, 11, 2, {0.86, 0.62, 0.2})
+    else
+      rect(x + 12, y + 10, 5, 4, {0.42, 0.24, 0.14})
+      rect(x + 16, y + 12, 4, 5, {0.74, 0.82, 0.9})
+      rect(x + 19, y + 16, 4, 4, {0.74, 0.82, 0.9})
+      rect(x + 22, y + 19, 4, 4, {0.94, 0.98, 1})
+      rect(x + 13, y + 9, 8, 2, {0.86, 0.62, 0.2})
+      rect(x + 18, y + 13, 1, 3, {1, 1, 0.88})
+    end
+  elseif attack == "lightning" then
+    rect(x + 14, y + 4, 2, 15, {0.42, 0.28, 0.18})
+    rect(x + 13, y + 2, 4, 4, {0.52, 0.86, 1})
+    if state.heroTimer > 0.72 then
+      rect(x + 19, y + 6, 3, 3, {0.82, 0.94, 1})
+    end
+  elseif attack == "bow" then
+    rect(x + 14, y + 5, 2, 13, {0.72, 0.48, 0.22})
+    rect(x + 16, y + 7, 2, 2, {0.9, 0.82, 0.5})
+    rect(x + 16, y + 14, 2, 2, {0.9, 0.82, 0.5})
+    if state.heroTimer > 0.72 then
+      rect(x + 18, y + 10, 7, 1, {0.92, 0.94, 0.72})
+    end
+  elseif state.heroTimer > 0.72 then
     rect(x + 15, y + 9, 9, 2, {0.92, 0.94, 0.72})
   else
     rect(x + 13, y + 9, 5, 2, {0.92, 0.94, 0.72})
+  end
+end
+
+local function drawAttackEffects()
+  for _, effect in ipairs(attackEffects) do
+    local t = 1 - effect.life / effect.maxLife
+    local color = effect.color
+
+    if effect.kind == "sword" then
+      local x = math.floor((effect.skillHit and 176 or 184) + 38 * t)
+      local y = math.floor((effect.skillHit and 24 or 29) + 5 * t)
+
+      rect(x - 2, y + 16, 8, 3, {0.86, 0.62, 0.2})
+      rect(x + 3, y + 13, 7, 3, {0.42, 0.24, 0.14})
+
+      lg.setColor(0.94, 0.98, 1, 0.95)
+      lg.line(x + 8, y + 14, x + 54, y - 4)
+      lg.line(x + 8, y + 16, x + 55, y - 2)
+      lg.line(x + 10, y + 18, x + 54, y)
+
+      lg.setColor(1, 1, 0.84, 0.95)
+      lg.line(x + 14, y + 14, x + 48, y + 1)
+
+      lg.setColor(copyColor(color, 0.55))
+      lg.line(x + 1, y + 22, x + 53, y + 4)
+      lg.line(x + 7, y + 25, x + 58, y + 8)
+
+      if effect.skillHit then
+        lg.setColor(1, 0.92, 0.32, 0.9)
+        lg.line(x - 4, y + 26, x + 62, y + 4)
+        lg.line(x + 1, y + 30, x + 67, y + 9)
+        rect(x + 55, y - 6, 5, 5, {1, 0.96, 0.45})
+      end
+    elseif effect.kind == "lightning" then
+      local x = math.floor(178 + 62 * t)
+      local y = 39 + math.floor(math.sin(t * 12) * 3)
+      rect(x, y, effect.skillHit and 6 or 4, effect.skillHit and 6 or 4, color)
+      rect(x + 2, y - 3, 2, 2, {0.86, 0.96, 1})
+      if effect.skillHit then
+        rect(x - 5, y + 2, 4, 2, {0.86, 0.96, 1})
+        rect(x + 7, y + 1, 5, 2, {0.86, 0.96, 1})
+      end
+    elseif effect.kind == "bow" then
+      local arrows = effect.skillHit and 3 or 1
+      for i = 1, arrows do
+        local x = math.floor(177 + 65 * t)
+        local y = 37 + (i - 2) * 4
+        rect(x, y, 10, 1, {0.9, 0.82, 0.5})
+        rect(x + 9, y - 1, 2, 3, color)
+      end
+    end
   end
 end
 
@@ -953,6 +912,12 @@ end
 
 local function drawMonster(x, y)
   local monster = state.monster
+  local sprite = sprites.monsters[monster.shape]
+  if sprite then
+    drawSprite(sprite, x - 2, y - 1, 28, 28)
+    return
+  end
+
   local base = monster.color or lightened(zones[state.zone].tint, 0.2)
   local glow = lightened(base, 0.22)
   local bob = math.sin(love.timer.getTime() * 4) > 0 and 1 or 0
@@ -1048,16 +1013,64 @@ local function drawButtons()
   end
 end
 
+local function drawLocationDetail(zone)
+  local style = zone.style
+
+  if style == "desert" then
+    rect(132, 47, 21, 2, {0.72, 0.54, 0.24})
+    rect(185, 49, 28, 2, {0.64, 0.45, 0.2})
+    rect(221, 34, 3, 13, {0.21, 0.45, 0.28})
+    rect(218, 39, 3, 2, {0.21, 0.45, 0.28})
+    rect(224, 37, 3, 2, {0.21, 0.45, 0.28})
+  elseif style == "jungle" then
+    for x = 130, 229, 17 do
+      rect(x, 18, 3, 31, {0.06, 0.19, 0.11})
+      rect(x - 3, 15, 9, 4, {0.16, 0.56, 0.18})
+      rect(x + 2, 22, 7, 3, {0.22, 0.67, 0.22})
+    end
+  elseif style == "swamp" then
+    rect(132, 48, 35, 3, {0.2, 0.38, 0.28})
+    rect(190, 47, 41, 4, {0.18, 0.34, 0.26})
+    rect(137, 43, 2, 8, {0.34, 0.43, 0.22})
+    rect(203, 41, 2, 10, {0.34, 0.43, 0.22})
+    rect(217, 44, 2, 7, {0.34, 0.43, 0.22})
+  elseif style == "dungeon" then
+    for x = 130, 230, 16 do
+      rect(x, 16, 13, 2, {0.34, 0.34, 0.36})
+      rect(x + 2, 30, 12, 2, {0.1, 0.1, 0.12})
+    end
+    rect(132, 22, 3, 8, {0.92, 0.48, 0.18})
+    rect(226, 22, 3, 8, {0.92, 0.48, 0.18})
+  elseif style == "dock" then
+    for x = 132, 226, 14 do
+      rect(x, 46, 10, 2, {0.36, 0.26, 0.17})
+      rect(x + 2, 48, 2, 6, {0.2, 0.16, 0.13})
+    end
+  elseif style == "ash" then
+    rect(133, 48, 30, 3, {0.28, 0.18, 0.13})
+    rect(198, 47, 29, 4, {0.32, 0.16, 0.12})
+    rect(150, 39, 2, 7, {0.84, 0.32, 0.12})
+    rect(213, 37, 2, 9, {0.84, 0.32, 0.12})
+  elseif style == "moon" then
+    rect(136, 18, 2, 2, {0.78, 0.85, 1})
+    rect(176, 14, 2, 2, {0.78, 0.85, 1})
+    rect(218, 20, 2, 2, {0.78, 0.85, 1})
+    rect(223, 41, 9, 2, {0.35, 0.31, 0.52})
+  else
+    for x = 130, 232, 10 do
+      rect(x, 53 + (x % 3), 5, 2, {0.17, 0.25, 0.17})
+    end
+  end
+end
+
 local function drawScene()
   local zone = zones[state.zone]
   rect(126, 8, 112, 54, {zone.tint[1], zone.tint[2], zone.tint[3]})
   rect(126, 51, 112, 11, {0.09, 0.14, 0.12})
-
-  for x = 130, 232, 10 do
-    rect(x, 53 + (x % 3), 5, 2, {0.17, 0.25, 0.17})
-  end
+  drawLocationDetail(zone)
 
   drawHero(154, 32)
+  drawAttackEffects()
   drawMonster(243, 30)
 
   local monster = state.monster
