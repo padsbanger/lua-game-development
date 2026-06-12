@@ -1,0 +1,50 @@
+return {
+  {
+    id = "dragon",
+    name = "Ember Dragon",
+    shape = "dragon",
+    color = {1, 0.32, 0.18},
+    hp = 4.25,
+    atk = 1.9,
+    def = 1.35,
+    speed = 1.18,
+    reward = 5.8,
+    drop = 3.4,
+    effect = "fire",
+    levelBonus = 2,
+    isBoss = true,
+    weight = 28
+  },
+  {
+    id = "cyclop",
+    name = "Iron Cyclop",
+    shape = "cyclop",
+    color = {0.58, 0.62, 0.55},
+    hp = 5.1,
+    atk = 1.72,
+    def = 1.85,
+    speed = 1.5,
+    reward = 6.2,
+    drop = 3.25,
+    effect = "crush",
+    levelBonus = 1,
+    isBoss = true,
+    weight = 32
+  },
+  {
+    id = "rat",
+    name = "Crown Rat",
+    shape = "rat",
+    color = {0.62, 0.42, 0.32},
+    hp = 3.35,
+    atk = 1.48,
+    def = 0.95,
+    speed = 0.72,
+    reward = 4.6,
+    drop = 3,
+    effect = "gnaw",
+    levelBonus = 0,
+    isBoss = true,
+    weight = 40
+  }
+}

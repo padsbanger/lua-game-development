@@ -37,14 +37,3 @@ The Windows build appears in `build`. Send the whole folder, not just the exe.
 - Mouse: click the command buttons
 
 Progress is saved automatically.
-
-## Graphics Pack
-
-Deskbar Quest can use external PNG sprites. Put pixel-art sprites in:
-
-```text
-assets\heroes
-assets\monsters
-```
-
-Use the filenames listed in `assets\README.md`. If a sprite is missing, the game falls back to its built-in rectangle art.

@@ -6,26 +6,36 @@ local VW, VH = 360, 80
 local SCALE = 2
 local SAVE_FILE = "save.lua"
 local VERSION = 1
+local MAX_MONSTERS = 3
+local BOSS_CHANCE = 10
+
+local MONSTER_SLOTS = {
+  {x = 236, y = 26},
+  {x = 263, y = 36},
+  {x = 216, y = 39}
+}
 
 local GLYPHS = require("data.glyphs")
 local classes = require("data.classes")
 local zones = require("data.zones")
 local monsterTypes = require("data.monster_types")
+local bossTypes = require("data.boss_types")
 local rarity = require("data.rarity")
 local itemNames = require("data.item_names")
+
+local createWindowIcon = require("data.utils")
 
 local canvas
 local buttons = {}
 local particles = {}
 local floaters = {}
 local attackEffects = {}
+local monsterAttackEffects = {}
+local monsterDeathEffects = {}
 local lastSave = 0
 local appMode = "menu"
 local state
-local sprites = {
-  heroes = {},
-  monsters = {}
-}
+local nextMonsterId = 1
 
 local rebuildButtons
 local rebuildMenuButtons
@@ -38,36 +48,7 @@ local function copyColor(color, alpha)
   return color[1], color[2], color[3], alpha or color[4] or 1
 end
 
-local function loadSprite(path)
-  if not lf.getInfo(path) then
-    return nil
-  end
 
-  local image = lg.newImage(path)
-  image:setFilter("nearest", "nearest")
-  return image
-end
-
-local function loadGraphicsPack()
-  sprites.heroes = {}
-  sprites.monsters = {}
-
-  for _, c in ipairs(classes) do
-    sprites.heroes[c.id] = loadSprite("assets/heroes/" .. c.id .. ".png")
-  end
-
-  for _, monsterType in ipairs(monsterTypes) do
-    sprites.monsters[monsterType.shape] = loadSprite("assets/monsters/" .. monsterType.shape .. ".png")
-  end
-end
-
-local function drawSprite(image, x, y, width, height)
-  local scale = math.min(width / image:getWidth(), height / image:getHeight())
-  local drawX = math.floor(x + (width - image:getWidth() * scale) / 2)
-  local drawY = math.floor(y + (height - image:getHeight() * scale) / 2)
-  lg.setColor(1, 1, 1)
-  lg.draw(image, drawX, drawY, 0, scale, scale)
-end
 
 local function textWidth(text)
   text = tostring(text):upper()
@@ -213,13 +194,40 @@ local function addParticle(x, y, color)
   }
 end
 
-local function addAttackEffect(kind, skillHit, color)
+local function addAttackEffect(kind, skillHit, color, target)
   attackEffects[#attackEffects + 1] = {
     kind = kind,
     skillHit = skillHit,
     color = color,
+    targetX = target and (target.x + 10) or 252,
+    targetY = target and (target.y + 12) or 42,
     life = kind == "sword" and 0.22 or 0.34,
     maxLife = kind == "sword" and 0.22 or 0.34
+  }
+end
+
+local function addMonsterAttackEffect(monster)
+  monsterAttackEffects[#monsterAttackEffects + 1] = {
+    id = monster.id,
+    shape = monster.shape or "beast",
+    effect = monster.effect,
+    color = monster.color or {0.95, 0.55, 0.28},
+    x = (monster.x or 252) + 12,
+    y = (monster.y or 42) + 14,
+    life = 0.34,
+    maxLife = 0.34
+  }
+end
+
+local function addMonsterDeathEffect(monster)
+  monsterDeathEffects[#monsterDeathEffects + 1] = {
+    id = monster.id,
+    shape = monster.shape or "beast",
+    color = monster.color or {0.95, 0.55, 0.28},
+    x = (monster.x or 252) + 12,
+    y = (monster.y or 42) + 14,
+    life = 0.54,
+    maxLife = 0.54
   }
 end
 
@@ -278,7 +286,10 @@ local function defaultState()
     heroHp = 44,
     skill = 0,
     heroTimer = 0,
-    monsterTimer = 0,
+    targetIndex = 1,
+    encounterSize = 0,
+    isBossEncounter = false,
+    monsters = {},
     recovery = 0,
     bag = {},
     gear = {
@@ -292,15 +303,17 @@ local function defaultState()
   }
 end
 
-local function spawnMonster()
+local function createMonster(slotIndex, forcedVariant)
   local zone = zones[state.zone]
-  local level = zone.level + math.floor(state.zoneKills / 7) + math.floor(state.kills / 25)
-  local variant = pickWeighted(monsterTypes)
-  local baseName = pick(zone.monsters)
-  local name = variant.title ~= "" and (variant.title .. " " .. baseName) or baseName
+  local variant = forcedVariant or pickWeighted(monsterTypes)
+  local level = zone.level + math.floor(state.zoneKills / 7) + math.floor(state.kills / 25) + (variant.levelBonus or 0)
+  local baseName = variant.isBoss and variant.name or pick(zone.monsters)
+  local name = variant.isBoss and variant.name or (variant.title ~= "" and (variant.title .. " " .. baseName) or baseName)
   local maxHp = math.floor((28 + level * 9 + state.zone * 8) * variant.hp)
+  local slot = MONSTER_SLOTS[slotIndex] or MONSTER_SLOTS[1]
 
-  state.monster = {
+  local monster = {
+    id = nextMonsterId,
     name = name,
     baseName = baseName,
     type = variant.id,
@@ -308,6 +321,7 @@ local function spawnMonster()
     color = variant.color,
     reward = variant.reward,
     drop = variant.drop,
+    isBoss = variant.isBoss,
     attackDelay = 1.55 * variant.speed,
     effect = variant.effect,
     level = level,
@@ -315,9 +329,84 @@ local function spawnMonster()
     hp = maxHp,
     atk = math.floor((4 + level * 2 + state.zone) * variant.atk),
     def = math.floor(level * 0.8 * variant.def),
-    timer = 0,
+    timer = love.math.random() * 0.65,
     frame = 0
   }
+
+  nextMonsterId = nextMonsterId + 1
+  monster.x = slot.x
+  monster.y = slot.y
+  return monster
+end
+
+local fillMonsterGroup
+
+local function rollEncounterSize()
+  local roll = love.math.random(100)
+  if roll <= 28 then
+    return 1
+  elseif roll <= 70 then
+    return 2
+  end
+  return MAX_MONSTERS
+end
+
+local function rollBossEncounter()
+  return love.math.random(100) <= BOSS_CHANCE
+end
+
+local function startEncounter()
+  state.monsters = {}
+  state.targetIndex = 1
+
+  if rollBossEncounter() then
+    state.isBossEncounter = true
+    state.encounterSize = 1
+    state.monsters[1] = createMonster(1, pickWeighted(bossTypes))
+    fillMonsterGroup()
+    log("Boss: " .. state.monsters[1].name, {1, 0.68, 0.28})
+  else
+    state.isBossEncounter = false
+    state.encounterSize = rollEncounterSize()
+    fillMonsterGroup()
+  end
+end
+
+local function activeMonsterCount()
+  if not state.encounterSize or state.encounterSize < 1 then
+    state.encounterSize = rollEncounterSize()
+  end
+  return clamp(state.encounterSize, 1, MAX_MONSTERS)
+end
+
+local function assignMonsterSlots()
+  for i, monster in ipairs(state.monsters or {}) do
+    local slot = MONSTER_SLOTS[i] or MONSTER_SLOTS[#MONSTER_SLOTS]
+    monster.x = slot.x
+    monster.y = slot.y
+  end
+end
+
+fillMonsterGroup = function()
+  state.monsters = state.monsters or {}
+  local wanted = activeMonsterCount()
+
+  while #state.monsters < wanted do
+    state.monsters[#state.monsters + 1] = createMonster(#state.monsters + 1)
+  end
+
+  assignMonsterSlots()
+  state.targetIndex = clamp(state.targetIndex or 1, 1, math.max(1, #state.monsters))
+end
+
+local function targetMonster()
+  state.monsters = state.monsters or {}
+  if #state.monsters == 0 then
+    startEncounter()
+  end
+
+  state.targetIndex = clamp(state.targetIndex or 1, 1, math.max(1, #state.monsters))
+  return state.monsters[state.targetIndex], state.targetIndex
 end
 
 local function loadSave()
@@ -340,13 +429,16 @@ local function loadSave()
   state.classIndex = clamp(state.classIndex or 1, 1, #classes)
   state.unlockedZone = clamp(state.unlockedZone or 1, 1, #zones)
   state.zone = clamp(state.zone or 1, 1, state.unlockedZone)
+  state.monsters = {}
+  state.encounterSize = 0
+  state.targetIndex = 1
 
   local s = stats()
   state.heroHp = clamp(state.heroHp or s.maxHp, 1, s.maxHp)
-  spawnMonster()
+  startEncounter()
 end
 
-local function makeItem()
+local function makeItem(sourceLevel)
   local roll = love.math.random(100)
   local r = rarity[1]
   local acc = 0
@@ -360,7 +452,7 @@ local function makeItem()
 
   local slotRoll = love.math.random(3)
   local slot = slotRoll == 1 and "weapon" or slotRoll == 2 and "armor" or "charm"
-  local level = math.max(1, state.monster.level + love.math.random(-1, 2))
+  local level = math.max(1, (sourceLevel or state.level) + love.math.random(-1, 2))
   local mult = r.mult
   local item = {
     slot = slot,
@@ -402,8 +494,7 @@ local function awardXp(amount)
   end
 end
 
-local function killMonster()
-  local monster = state.monster
+local function killMonster(monster, index)
   local reward = monster.reward or 1
   local gold = math.floor((6 + monster.level * 3 + love.math.random(0, state.zone * 4)) * reward)
   local xp = math.floor((8 + monster.level * 4) * reward)
@@ -415,7 +506,7 @@ local function killMonster()
   addFloater("+" .. gold .. "g", 245, 32, {1, 0.84, 0.28})
 
   if love.math.random() < 0.34 * (monster.drop or 1) then
-    local item = makeItem()
+    local item = makeItem(monster.level)
     if #state.bag < 6 then
       state.bag[#state.bag + 1] = item
       log(item.rarity .. " " .. item.name, item.color)
@@ -429,18 +520,34 @@ local function killMonster()
     state.unlockedZone = state.unlockedZone + 1
     state.zoneKills = 0
     log(zones[state.unlockedZone].name .. " unlocked.", {0.46, 0.86, 1})
+  elseif monster.isBoss then
+    log(monster.name .. " defeated.", {1, 0.76, 0.32})
   end
 
   for _ = 1, 8 do
     addParticle(265, 43, monster.color or {0.95, 0.55, 0.28})
   end
+  addMonsterDeathEffect(monster)
 
-  spawnMonster()
+  if index then
+    table.remove(state.monsters, index)
+  end
+
+  assignMonsterSlots()
+  state.targetIndex = clamp(index or 1, 1, math.max(1, #state.monsters))
+  if #state.monsters == 0 then
+    state.encounterSize = 0
+    state.isBossEncounter = false
+  end
 end
 
 local function attackMonster(skillHit)
   local s = stats()
-  local monster = state.monster
+  local monster, index = targetMonster()
+  if not monster then
+    return
+  end
+
   local c = class()
   local defenseFactor = c.attack == "lightning" and 0.18 or c.attack == "bow" and 0.34 or 0.55
   local base = math.max(1, s.atk - monster.def * defenseFactor)
@@ -476,26 +583,56 @@ local function attackMonster(skillHit)
   end
 
   local totalDamage = damage * hitCount
-  monster.hp = monster.hp - totalDamage
-  addAttackEffect(c.attack, skillHit, c.color)
+  addAttackEffect(c.attack, skillHit, c.color, monster)
 
+  if c.attack == "lightning" and #state.monsters > 1 then
+    for i = #state.monsters, 1, -1 do
+      local target = state.monsters[i]
+      local splash = i == index and totalDamage or math.max(1, math.floor(totalDamage * (skillHit and 0.55 or 0.32)))
+      target.hp = target.hp - splash
+      addFloater(tostring(splash), target.x + 9, target.y + 5, i == index and c.color or {0.62, 0.86, 1})
+      if target.hp <= 0 then
+        killMonster(target, i)
+      end
+    end
+    return
+  elseif c.attack == "bow" and hitCount > 1 then
+    local remaining = hitCount
+    local i = index
+    while remaining > 0 and #state.monsters > 0 do
+      local target = state.monsters[((i - 1) % #state.monsters) + 1]
+      local targetIndex = ((i - 1) % #state.monsters) + 1
+      target.hp = target.hp - damage
+      addFloater(tostring(damage), target.x + 9, target.y + 5, c.color)
+      if target.hp <= 0 then
+        killMonster(target, targetIndex)
+      else
+        i = i + 1
+      end
+      remaining = remaining - 1
+    end
+    return
+  end
+
+  monster.hp = monster.hp - totalDamage
   if hitCount > 1 then
-    addFloater(tostring(totalDamage), 259, 39, c.color)
+    addFloater(tostring(totalDamage), monster.x + 9, monster.y + 5, c.color)
   end
 
   for _ = 1, skillHit and 10 or 4 do
-    addParticle(252, 42, c.color)
+    addParticle(monster.x + 9, monster.y + 12, c.color)
   end
 
   if monster.hp <= 0 then
-    killMonster()
+    killMonster(monster, index)
   end
 end
 
-local function monsterAttack()
+local function monsterAttack(monster)
   local s = stats()
-  local monster = state.monster
   local damage = math.max(1, monster.atk - s.def)
+
+  addMonsterAttackEffect(monster)
 
   if monster.effect == "blast" then
     damage = math.floor(damage * 1.35 + monster.level)
@@ -506,6 +643,17 @@ local function monsterAttack()
   elseif monster.effect == "rage" and monster.hp < monster.maxHp * 0.45 then
     damage = math.floor(damage * 1.55)
     addFloater("rage", 239, 20, monster.color)
+  elseif monster.effect == "fire" then
+    damage = math.floor(damage * 1.45 + s.maxHp * 0.03)
+    addFloater("fire", 239, 20, monster.color)
+  elseif monster.effect == "crush" then
+    damage = math.floor(damage * 1.7)
+    state.heroTimer = math.max(0, state.heroTimer - 0.18)
+    addFloater("crush", 239, 20, monster.color)
+  elseif monster.effect == "gnaw" then
+    damage = damage + math.max(1, math.floor(monster.level * 0.55))
+    state.skill = math.max(0, state.skill - 8)
+    addFloater("gnaw", 239, 20, monster.color)
   end
 
   state.heroHp = state.heroHp - damage
@@ -574,7 +722,10 @@ local function changeZone(delta)
   if nextZone ~= state.zone then
     state.zone = nextZone
     state.zoneKills = 0
-    spawnMonster()
+    state.monsters = {}
+    state.encounterSize = 0
+    state.targetIndex = 1
+    startEncounter()
     log("Travel: " .. zones[state.zone].name, {0.52, 0.88, 1})
   end
 end
@@ -618,13 +769,10 @@ local function offlineProgress()
     state.zoneKills = state.zoneKills - 16
   end
 
-  local previousMonster = state.monster
   local drops = math.min(6 - #state.bag, math.floor(kills / 5))
   for _ = 1, drops do
-    state.monster = {level = monsterLevel}
-    state.bag[#state.bag + 1] = makeItem()
+    state.bag[#state.bag + 1] = makeItem(monsterLevel)
   end
-  state.monster = previousMonster
 
   log("Away " .. math.floor(away / 60) .. "m: +" .. gold .. "g, " .. kills .. " wins.", {0.56, 0.92, 1})
 end
@@ -632,7 +780,7 @@ end
 local function resetSave()
   lf.remove(SAVE_FILE)
   state = defaultState()
-  spawnMonster()
+  startEncounter()
   log("Save reset.", {1, 0.56, 0.44})
 end
 
@@ -646,7 +794,9 @@ local function beginNewGame()
   particles = {}
   floaters = {}
   attackEffects = {}
-  spawnMonster()
+  monsterAttackEffects = {}
+  monsterDeathEffects = {}
+  startEncounter()
   appMode = "playing"
   rebuildButtons()
   save()
@@ -661,6 +811,8 @@ local function beginLoadGame()
   particles = {}
   floaters = {}
   attackEffects = {}
+  monsterAttackEffects = {}
+  monsterDeathEffects = {}
   loadSave()
   offlineProgress()
   appMode = "playing"
@@ -692,6 +844,9 @@ end
 
 local function updateCombat(dt)
   local s = stats()
+  if not state.monsters or #state.monsters == 0 then
+    startEncounter()
+  end
 
   if state.recovery > 0 then
     state.recovery = state.recovery - dt
@@ -704,7 +859,6 @@ local function updateCombat(dt)
   end
 
   state.heroTimer = state.heroTimer + dt * s.speed
-  state.monsterTimer = state.monsterTimer + dt
   state.skill = clamp(state.skill + dt * (7 + s.speed * 3), 0, 100)
 
   if state.heroTimer >= 1 then
@@ -713,10 +867,13 @@ local function updateCombat(dt)
     attackMonster(skillHit)
   end
 
-  local delay = state.monster.attackDelay or 1.55
-  if state.monsterTimer >= delay then
-    state.monsterTimer = state.monsterTimer - delay
-    monsterAttack()
+  for _, monster in ipairs(state.monsters) do
+    monster.timer = (monster.timer or 0) + dt
+    local delay = monster.attackDelay or 1.55
+    if monster.timer >= delay then
+      monster.timer = monster.timer - delay
+      monsterAttack(monster)
+    end
   end
 end
 
@@ -749,6 +906,22 @@ local function updateEffects(dt)
     end
   end
 
+  for i = #monsterAttackEffects, 1, -1 do
+    local effect = monsterAttackEffects[i]
+    effect.life = effect.life - dt
+    if effect.life <= 0 then
+      table.remove(monsterAttackEffects, i)
+    end
+  end
+
+  for i = #monsterDeathEffects, 1, -1 do
+    local effect = monsterDeathEffects[i]
+    effect.life = effect.life - dt
+    if effect.life <= 0 then
+      table.remove(monsterDeathEffects, i)
+    end
+  end
+
   state.logTimer = math.max(0, (state.logTimer or 0) - dt)
 end
 
@@ -758,13 +931,13 @@ function love.load()
   lg.setLineStyle("rough")
   canvas = lg.newCanvas(VW, VH)
   canvas:setFilter("nearest", "nearest")
-  loadGraphicsPack()
+  love.window.setIcon(createWindowIcon())
 
   local desktopW, desktopH = love.window.getDesktopDimensions()
   love.window.setPosition(math.max(0, desktopW - 740), math.max(0, desktopH - 230))
 
   state = defaultState()
-  spawnMonster()
+  startEncounter()
   rebuildMenuButtons()
 end
 
@@ -797,11 +970,6 @@ end
 local function drawHero(x, y)
   local c = class().color
   local attack = class().attack
-  local sprite = sprites.heroes[class().id]
-  if sprite then
-    drawSprite(sprite, x - 3, y - 2, 28, 28)
-    return
-  end
 
   rect(x + 3, y + 4, 10, 15, {0.12, 0.12, 0.14})
   rect(x + 5, y, 7, 6, {0.92, 0.72, 0.5})
@@ -857,8 +1025,10 @@ local function drawAttackEffects()
     local color = effect.color
 
     if effect.kind == "sword" then
-      local x = math.floor((effect.skillHit and 176 or 184) + 38 * t)
-      local y = math.floor((effect.skillHit and 24 or 29) + 5 * t)
+      local targetX = effect.targetX or 252
+      local targetY = effect.targetY or 42
+      local x = math.floor((effect.skillHit and 176 or 184) + (targetX - 186) * t)
+      local y = math.floor((effect.skillHit and 24 or 29) + (targetY - 36) * t)
 
       rect(x - 2, y + 16, 8, 3, {0.86, 0.62, 0.2})
       rect(x + 3, y + 13, 7, 3, {0.42, 0.24, 0.14})
@@ -882,8 +1052,10 @@ local function drawAttackEffects()
         rect(x + 55, y - 6, 5, 5, {1, 0.96, 0.45})
       end
     elseif effect.kind == "lightning" then
-      local x = math.floor(178 + 62 * t)
-      local y = 39 + math.floor(math.sin(t * 12) * 3)
+      local targetX = effect.targetX or 252
+      local targetY = effect.targetY or 42
+      local x = math.floor(178 + (targetX - 178) * t)
+      local y = math.floor(39 + (targetY - 39) * t + math.sin(t * 12) * 3)
       rect(x, y, effect.skillHit and 6 or 4, effect.skillHit and 6 or 4, color)
       rect(x + 2, y - 3, 2, 2, {0.86, 0.96, 1})
       if effect.skillHit then
@@ -893,8 +1065,10 @@ local function drawAttackEffects()
     elseif effect.kind == "bow" then
       local arrows = effect.skillHit and 3 or 1
       for i = 1, arrows do
-        local x = math.floor(177 + 65 * t)
-        local y = 37 + (i - 2) * 4
+        local targetX = effect.targetX or 252
+        local targetY = effect.targetY or 42
+        local x = math.floor(177 + (targetX - 177) * t)
+        local y = math.floor(37 + (targetY - 37) * t + (i - 2) * 4)
         rect(x, y, 10, 1, {0.9, 0.82, 0.5})
         rect(x + 9, y - 1, 2, 3, color)
       end
@@ -902,7 +1076,197 @@ local function drawAttackEffects()
   end
 end
 
-local function lightened(color, amount)
+local lightened
+
+local function monsterAttackOffset(monsterId)
+  local offsetX = 0
+  local offsetY = 0
+
+  for _, effect in ipairs(monsterAttackEffects) do
+    if effect.id == monsterId then
+      local t = 1 - effect.life / effect.maxLife
+      local punch = math.sin(t * math.pi)
+
+      if effect.shape == "dragon" then
+        offsetX = offsetX - math.floor(12 * punch)
+        offsetY = offsetY - math.floor(2 * punch)
+      elseif effect.shape == "cyclop" then
+        offsetX = offsetX - math.floor(9 * punch)
+      elseif effect.shape == "rat" then
+        offsetX = offsetX - math.floor(15 * punch)
+        offsetY = offsetY + math.floor(2 * punch)
+      elseif effect.shape == "wing" then
+        offsetX = offsetX - math.floor(13 * punch)
+        offsetY = offsetY - math.floor(2 * punch)
+      elseif effect.shape == "slime" or effect.shape == "wisp" then
+        offsetX = offsetX - math.floor(4 * punch)
+        offsetY = offsetY - math.floor(3 * punch)
+      elseif effect.shape == "shield" then
+        offsetX = offsetX - math.floor(7 * punch)
+      elseif effect.shape == "elite" then
+        offsetX = offsetX - math.floor(10 * punch)
+        offsetY = offsetY - math.floor(1 * punch)
+      else
+        offsetX = offsetX - math.floor(8 * punch)
+      end
+    end
+  end
+
+  return offsetX, offsetY
+end
+
+local function drawMonsterAttackEffects()
+  for _, effect in ipairs(monsterAttackEffects) do
+    local t = 1 - effect.life / effect.maxLife
+    local color = effect.color
+    local pulse = math.sin(t * math.pi)
+
+    if effect.shape == "dragon" then
+      local x = math.floor(effect.x - 18 - 58 * t)
+      local y = effect.y - 9 + math.floor(math.sin(t * 10) * 3)
+      rect(x, y, 18, 5, {1, 0.28, 0.12})
+      rect(x + 5, y - 3, 14, 4, {1, 0.68, 0.2})
+      rect(x + 11, y + 3, 10, 3, {1, 0.9, 0.35})
+      rect(x - 5, y + 1, 7, 2, {0.55, 0.08, 0.08})
+    elseif effect.shape == "cyclop" then
+      local x = math.floor(effect.x - 20 - 40 * t)
+      local y = effect.y - 13
+      rect(x, y, 6, 25, {0.32, 0.24, 0.18})
+      rect(x - 3, y + 18, 15, 5, color)
+      rect(x + 10, effect.y + 11, math.floor(20 * pulse), 2, {0.78, 0.82, 0.76})
+    elseif effect.shape == "rat" then
+      local x = math.floor(effect.x - 9 - 66 * t)
+      local y = effect.y + 5 + math.floor(math.sin(t * 18) * 2)
+      rect(x, y, 13, 5, color)
+      rect(x - 3, y + 2, 4, 2, lightened(color, 0.16))
+      rect(x + 10, y - 2, 3, 3, {1, 0.86, 0.45})
+    elseif effect.shape == "wing" then
+      local x = math.floor(effect.x - 12 - 60 * t)
+      local y = effect.y - 4 - math.floor(4 * pulse)
+      rect(x, y, 17, 2, color)
+      rect(x + 10, y - 3, 8, 2, lightened(color, 0.25))
+      rect(x + 5, y + 3, 12, 2, {0.18, 0.2, 0.24})
+    elseif effect.shape == "slime" then
+      local x = math.floor(effect.x - 10 - 58 * t)
+      local y = effect.y + math.floor(math.sin(t * 10) * 3)
+      rect(x, y, 5, 5, color)
+      rect(x + 2, y - 2, 2, 2, lightened(color, 0.25))
+    elseif effect.shape == "wisp" then
+      local x = math.floor(effect.x - 10 - 64 * t)
+      local y = effect.y - 6 + math.floor(math.sin(t * 14) * 5)
+      rect(x, y, 5, 5, color)
+      rect(x - 4, y + 2, 4, 2, lightened(color, 0.25))
+      rect(x + 6, y + 1, 5, 2, {0.86, 0.96, 1})
+    elseif effect.shape == "mimic" then
+      local x = math.floor(effect.x - 15 - 18 * pulse)
+      rect(x, effect.y - 7, 20, 3, {0.94, 0.9, 0.7})
+      rect(x + 2, effect.y + 2, 17, 3, {0.94, 0.9, 0.7})
+      rect(x - 4, effect.y - 3, 9, 2, color)
+      rect(x - 4, effect.y, 9, 2, color)
+    elseif effect.shape == "shield" then
+      local x = math.floor(effect.x - 22 - 45 * t)
+      rect(x, effect.y - 11, 4, 19, color)
+      rect(x - 3, effect.y - 8, 3, 13, lightened(color, 0.18))
+      rect(x + 5, effect.y - 7, 8, 11, {0.12, 0.12, 0.14})
+    elseif effect.shape == "elite" then
+      local x = math.floor(effect.x - 20 - 42 * t)
+      local y = effect.y - 11
+      lg.setColor(1, 0.28, 0.2, 0.92)
+      lg.line(x + 22, y, x - 10, y + 23)
+      lg.line(x + 25, y + 4, x - 7, y + 27)
+      lg.setColor(1, 0.9, 0.32, 0.75)
+      lg.line(x + 17, y + 1, x - 13, y + 21)
+    else
+      local x = math.floor(effect.x - 15 - 40 * t)
+      rect(x, effect.y - 6, 13, 3, color)
+      rect(x - 4, effect.y - 8, 5, 2, lightened(color, 0.18))
+      rect(x - 4, effect.y - 1, 5, 2, lightened(color, 0.18))
+    end
+  end
+end
+
+local function drawMonsterDeathEffects()
+  for _, effect in ipairs(monsterDeathEffects) do
+    local t = 1 - effect.life / effect.maxLife
+    local fade = clamp(effect.life / effect.maxLife, 0, 1)
+    local color = effect.color
+    local x = effect.x
+    local y = effect.y
+
+    if effect.shape == "dragon" then
+      for i = 1, 8 do
+        local dx = (i - 4) * 5
+        local dy = math.floor(-10 * t + (i % 3) * 4)
+        rect(x + dx, y + dy, 5, 3, {color[1], color[2], color[3], fade})
+        rect(x + dx + 1, y + dy - 3, 3, 2, {1, 0.76, 0.22, fade})
+      end
+      rect(x - 15, y + 10, 30, 3, {0.2, 0.06, 0.05, fade})
+    elseif effect.shape == "cyclop" then
+      rect(x - 10 - math.floor(8 * t), y + 2, 12, 12, {color[1], color[2], color[3], fade})
+      rect(x + 1 + math.floor(8 * t), y + 4, 10, 10, {color[1], color[2], color[3], fade})
+      rect(x - 2, y - 10 - math.floor(8 * t), 6, 6, {1, 0.9, 0.42, fade})
+      rect(x - 14, y + 14, 28, 3, {0.13, 0.12, 0.12, fade})
+    elseif effect.shape == "rat" then
+      for i = 1, 6 do
+        local dx = (i - 3) * 5
+        local dy = math.floor(7 * t + (i % 2) * 3)
+        rect(x + dx, y + dy, 4, 3, {color[1], color[2], color[3], fade})
+      end
+      rect(x - 9, y + 10, 18, 2, {0.12, 0.08, 0.07, fade})
+    elseif effect.shape == "wing" then
+      for i = 1, 5 do
+        local dx = (i - 3) * 5
+        local dy = math.floor(-8 * t + (i % 2) * 4)
+        rect(x + dx, y + dy, 4, 2, {color[1], color[2], color[3], fade})
+        rect(x + dx + 1, y + dy + 3, 2, 2, {0.86, 0.96, 1, fade})
+      end
+    elseif effect.shape == "slime" then
+      local w = math.floor(8 + 20 * t)
+      rect(x - math.floor(w / 2), y + 8, w, 3, {color[1], color[2], color[3], fade})
+      rect(x - 4, y + 5, 8, 3, {color[1], color[2], color[3], fade * 0.8})
+      rect(x + 8, y + 7, 5, 2, {color[1], color[2], color[3], fade * 0.7})
+    elseif effect.shape == "wisp" then
+      for i = 1, 7 do
+        local angle = i * 0.9
+        local radius = 4 + 19 * t
+        local px = math.floor(x + math.cos(angle) * radius)
+        local py = math.floor(y + math.sin(angle) * radius - 8 * t)
+        rect(px, py, 3, 3, {color[1], color[2], color[3], fade})
+        rect(px + 1, py - 2, 1, 1, {0.86, 0.96, 1, fade})
+      end
+    elseif effect.shape == "mimic" then
+      rect(x - 10, y + 4, 20, 4, {0.35, 0.08, 0.08, fade})
+      rect(x - 12, y - math.floor(10 * t), 8, 3, {color[1], color[2], color[3], fade})
+      rect(x + 5, y - math.floor(8 * t), 8, 3, {color[1], color[2], color[3], fade})
+      rect(x - 4, y + 1, 3, 4, {1, 0.95, 0.72, fade})
+      rect(x + 5, y + 1, 3, 4, {1, 0.95, 0.72, fade})
+    elseif effect.shape == "shield" then
+      rect(x - 7 - math.floor(8 * t), y - 8, 6, 14, {color[1], color[2], color[3], fade})
+      rect(x + 1 + math.floor(8 * t), y - 8, 6, 14, {color[1], color[2], color[3], fade})
+      rect(x - 2, y - 12 - math.floor(6 * t), 4, 7, {0.94, 0.98, 1, fade})
+    elseif effect.shape == "elite" then
+      for i = 1, 8 do
+        local angle = i * 0.785
+        local radius = 5 + 22 * t
+        local px = math.floor(x + math.cos(angle) * radius)
+        local py = math.floor(y + math.sin(angle) * radius)
+        rect(px, py, 4, 4, {color[1], color[2], color[3], fade})
+      end
+      lg.setColor(1, 0.84, 0.24, fade)
+      lg.line(x - 17, y, x + 17, y)
+      lg.line(x, y - 17, x, y + 17)
+    else
+      for i = 1, 7 do
+        local dx = (i - 4) * 4
+        local dy = math.floor((i % 3) * 3 + 11 * t)
+        rect(x + dx, y + dy, 4, 4, {color[1], color[2], color[3], fade})
+      end
+      rect(x - 10, y + 9, 20, 2, {0.12, 0.1, 0.12, fade})
+    end
+  end
+end
+
+lightened = function(color, amount)
   return {
     clamp(color[1] + amount, 0, 1),
     clamp(color[2] + amount, 0, 1),
@@ -910,19 +1274,50 @@ local function lightened(color, amount)
   }
 end
 
-local function drawMonster(x, y)
-  local monster = state.monster
-  local sprite = sprites.monsters[monster.shape]
-  if sprite then
-    drawSprite(sprite, x - 2, y - 1, 28, 28)
+local function drawMonster(monster, x, y)
+  if not monster then
     return
   end
+
+  local ox, oy = monsterAttackOffset(monster.id)
+  x = x + ox
+  y = y + oy
 
   local base = monster.color or lightened(zones[state.zone].tint, 0.2)
   local glow = lightened(base, 0.22)
   local bob = math.sin(love.timer.getTime() * 4) > 0 and 1 or 0
 
-  if monster.shape == "wing" then
+  if monster.shape == "dragon" then
+    rect(x - 1, y + 9 + bob, 28, 13, {0.13, 0.06, 0.05})
+    rect(x + 5, y + 4 + bob, 16, 13, base)
+    rect(x + 18, y + 1 + bob, 8, 9, base)
+    rect(x + 22, y + 4 + bob, 5, 3, glow)
+    rect(x + 1, y + 3 + bob, 8, 9, {0.74, 0.13, 0.12})
+    rect(x + 13, y + 0 + bob, 8, 9, {0.74, 0.13, 0.12})
+    rect(x + 3, y + 17 + bob, 5, 6, base)
+    rect(x + 16, y + 17 + bob, 5, 6, base)
+    rect(x + 20, y + 6 + bob, 2, 2, {1, 0.9, 0.3})
+    rect(x + 24, y + 8 + bob, 5, 2, {1, 0.62, 0.16})
+  elseif monster.shape == "cyclop" then
+    rect(x + 3, y + 6 + bob, 20, 17, {0.1, 0.1, 0.11})
+    rect(x + 6, y + 2 + bob, 14, 18, base)
+    rect(x + 8, y + 0 + bob, 10, 5, glow)
+    rect(x + 11, y + 8 + bob, 5, 4, {1, 0.88, 0.36})
+    rect(x + 13, y + 9 + bob, 2, 2, {0.12, 0.08, 0.05})
+    rect(x + 2, y + 10 + bob, 4, 10, base)
+    rect(x + 20, y + 9 + bob, 4, 10, base)
+    rect(x + 1, y + 22 + bob, 8, 3, {0.32, 0.24, 0.18})
+  elseif monster.shape == "rat" then
+    rect(x + 4, y + 13 + bob, 20, 8, {0.12, 0.08, 0.07})
+    rect(x + 7, y + 9 + bob, 15, 10, base)
+    rect(x + 20, y + 7 + bob, 7, 7, base)
+    rect(x + 20, y + 4 + bob, 3, 4, glow)
+    rect(x + 25, y + 5 + bob, 3, 4, glow)
+    rect(x + 22, y + 10 + bob, 2, 2, {1, 0.86, 0.45})
+    rect(x + 2, y + 8 + bob, 4, 3, {1, 0.78, 0.22})
+    rect(x + 7, y + 6 + bob, 4, 3, {1, 0.78, 0.22})
+    rect(x + 1, y + 18 + bob, 6, 2, base)
+  elseif monster.shape == "wing" then
     rect(x + 1, y + 8 + bob, 6, 5, glow)
     rect(x + 17, y + 8 + bob, 6, 5, glow)
     rect(x + 7, y + 5 + bob, 10, 10, {0.12, 0.1, 0.12})
@@ -1065,18 +1460,26 @@ end
 
 local function drawScene()
   local zone = zones[state.zone]
+  local target = targetMonster()
   rect(126, 8, 112, 54, {zone.tint[1], zone.tint[2], zone.tint[3]})
   rect(126, 51, 112, 11, {0.09, 0.14, 0.12})
   drawLocationDetail(zone)
 
   drawHero(154, 32)
   drawAttackEffects()
-  drawMonster(243, 30)
+  for i, monster in ipairs(state.monsters) do
+    local slot = MONSTER_SLOTS[i] or MONSTER_SLOTS[1]
+    drawMonster(monster, slot.x, slot.y)
+    bar(slot.x + 1, slot.y + 24, 20, 3, monster.hp, monster.maxHp, monster == target and {1, 0.52, 0.28} or {0.92, 0.24, 0.22})
+  end
+  drawMonsterAttackEffects()
+  drawMonsterDeathEffects()
 
-  local monster = state.monster
-  pxPrint(fitText(monster.name, 64), 139, 10, {0.92, 0.9, 0.78})
-  pxPrint("Lv " .. monster.level, 207, 10, {0.66, 0.68, 0.62})
-  bar(142, 22, 82, 5, monster.hp, monster.maxHp, {0.92, 0.24, 0.22})
+  if target then
+    pxPrint(fitText(target.name, 64), 139, 10, {0.92, 0.9, 0.78})
+    pxPrint((target.isBoss and "B " or "Lv ") .. target.level, 207, 10, target.isBoss and {1, 0.76, 0.32} or {0.66, 0.68, 0.62})
+    bar(142, 22, 82, 5, target.hp, target.maxHp, target.isBoss and {1, 0.62, 0.18} or {0.92, 0.24, 0.22})
+  end
 
   pxPrintf(zone.name, 149, 64, 62, "center", {0.8, 0.86, 0.78})
 end
@@ -1140,7 +1543,7 @@ local function drawMenu()
   end
 
   drawHero(72, 34)
-  drawMonster(270, 32)
+  drawMonster(targetMonster(), 270, 32)
 end
 
 function love.draw()
